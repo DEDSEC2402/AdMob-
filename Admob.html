@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AdMob Master Portal</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+
+    <style>
+        :root { --primary: #4a90e2; --bg: #f4f7f6; --card: #ffffff; --border: #c0c0c0; }
+        body { font-family: 'Calibri', 'Segoe UI', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; }
+        
+        /* Container Styles */
+        .container { max-width: 1400px; margin: 0 auto; background: var(--card); padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        
+        /* Controls Header */
+        .controls { display: flex; flex-wrap: wrap; gap: 15px; align-items: center; margin-bottom: 30px; border-bottom: 2px solid #eee; padding-bottom: 20px; }
+        
+        /* Buttons & Inputs */
+        .upload-btn-wrapper { position: relative; overflow: hidden; display: inline-block; }
+        .btn { border: 2px solid var(--primary); color: var(--primary); background-color: white; padding: 8px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.3s; font-size: 14px; }
+        .btn:hover { background-color: var(--primary); color: white; }
+        .upload-btn-wrapper input[type=file] { font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; }
+        
+        /* Dropdown Style */
+        .app-select { padding: 8px 12px; border-radius: 6px; border: 1px solid #ccc; font-size: 14px; min-width: 250px; display: none; }
+        
+        .download-btn { background-color: #27ae60; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; display: none; margin-left: auto; }
+        .download-btn:hover { background-color: #219150; }
+
+        #fileName { color: #666; font-size: 14px; margin-right: 10px; }
+        #status { font-weight: bold; color: #555; font-size: 14px; }
+
+        /* --- TABLE STYLES --- */
+        .report-view { overflow-x: auto; margin-top: 20px; }
+        table.excel-table { border-collapse: collapse; width: 100%; font-size: 13px; margin-bottom: 40px; border: 1px solid var(--border); }
+        
+        /* Grid Lines */
+        table.excel-table th, table.excel-table td { border: 1px solid var(--border); padding: 5px 8px; white-space: nowrap; }
+        
+        /* Header Rows */
+        table.excel-table th.app-header { color: #000; font-weight: bold; text-align: center; font-size: 15px; padding: 8px; }
+        table.excel-table th.date-header { text-align: center; font-weight: bold; background-color: inherit; }
+        
+        /* KPI Labels (Column A) */
+        table.excel-table td.kpi-label { text-align: left; font-weight: bold; background-color: #ffffff; min-width: 180px; position: sticky; left: 0; border-right: 2px solid #999; }
+        
+        /* Data Cells */
+        table.excel-table td.data-cell { text-align: center; color: #333; }
+        
+        .country-title { font-size: 14px; color: #555; margin-bottom: 5px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--primary); display: inline-block; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="controls">
+        <h2>AdMob Portal</h2>
+        
+        <div class="upload-btn-wrapper">
+            <button class="btn">📂 Upload CSV</button>
+            <input type="file" id="fileInput" accept=".csv">
+        </div>
+        <span id="fileName"></span>
+
+        <select id="appSelect" class="app-select">
+            <option value="all">Show All Apps (Global Summary)</option>
+        </select>
+        
+        <div id="status"></div>
+        
+        <button id="downloadBtn" class="download-btn">⬇ Download Excel</button>
+    </div>
+
+    <div id="reportOutput" class="report-view"></div>
+</div>
+
+<script>
+    // --- CONFIGURATION ---
+    const APP_PRIORITY_LIST = [
+        "Detective IQ: A Detective Game - Android", "Detective IQ 2: Catch Thieves - Android",
+        "Detective IQ 3: Lost Future - Android", "GhostIQ - Android",
+        "10+ Brain Games: Test Your IQ - Android", "1 Minute Battles: Mini Games - Android",
+        "Bees Attack: Draw to Save - Android", "Detective IQ: Brain Games - iOS",
+        "Detective IQ 2: Catch Thieves - iOS"
+    ];
+
+    // CSV Values for Countries
+    const TARGET_COUNTRIES = [
+        "India", "Bangladesh", "Pakistan", "Indonesia", "Türkiye", "Mexico", "Brazil", "France", "United States"
+    ];
+
+    const HEADER_COLORS = [
+        "#DA9694", "#EED480", "#BDD7EE", "#C6E0B4", "#F4B084", "#CCC0DA", "#E79DD4", "#6CC0AC", "#B6B6B6"
+    ];
+
+    const KPI_ORDER = [
+        "Active Viewer", "Estimated earnings (USD)", "Ads ARPDAV (USD)", "eCPM (USD)",
+        "Imp per AV", "Requests", "Match rate", "Show rate", "Impressions", "Request per AV"
+    ];
+
+    const KPI_MAP = {
+        "DAV": "Active Viewer",
+        "Estimated earnings (USD)": "Estimated earnings (USD)",
+        "Ads ARPDAV (USD)": "Ads ARPDAV (USD)",
+        "Observed eCPM (USD)": "eCPM (USD)",
+        "IMPDAV": "Imp per AV",
+        "Requests": "Requests",
+        "Match rate": "Match rate",
+        "Show rate": "Show rate",
+        "Impressions": "Impressions"
+    };
+
+    // --- STATE VARIABLES ---
+    let GLOBAL_SHEET_NAMES = []; // Sorted list of "App - Platform"
+    let GLOBAL_RAW_DATA = {};    // Raw rows keyed by "App - Platform"
+    let GLOBAL_AGGREGATED_DATA = {}; // Aggregated (Global) rows keyed by "App - Platform"
+    let GLOBAL_DATES = [];
+
+    // --- EVENT LISTENERS ---
+    const fileInput = document.getElementById('fileInput');
+    const appSelect = document.getElementById('appSelect');
+    const downloadBtn = document.getElementById('downloadBtn');
+
+    fileInput.addEventListener('change', function(e) {
+        if(this.files[0]) {
+            document.getElementById('fileName').innerText = this.files[0].name;
+            processFile(this.files[0]);
+        }
+    });
+
+    appSelect.addEventListener('change', function() {
+        renderHTML(this.value);
+    });
+
+    downloadBtn.addEventListener('click', () => downloadExcel(appSelect.value));
+
+    // --- 1. PROCESS FILE ---
+    function processFile(file) {
+        const status = document.getElementById('status');
+        status.innerText = "Processing...";
+        
+        Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            complete: function(results) {
+                try {
+                    analyzeData(results.data);
+                    
+                    // Setup UI
+                    populateDropdown();
+                    appSelect.style.display = "block";
+                    downloadBtn.style.display = "block";
+                    
+                    // Render Default
+                    renderHTML("all");
+                    
+                    status.innerText = "";
+                } catch (err) {
+                    console.error(err);
+                    status.innerText = "❌ Error: " + err.message;
+                    status.style.color = "red";
+                }
+            }
+        });
+    }
+
+    // --- 2. ANALYZE DATA ---
+    function analyzeData(data) {
+        GLOBAL_RAW_DATA = {};
+        GLOBAL_AGGREGATED_DATA = {};
+        const revenueMap = {};
+        const allDates = new Set();
+
+        data.forEach(row => {
+            const app = row["App"];
+            const platform = row["Platform"];
+            const country = row["Country"];
+            const date = row["Date"];
+
+            if (!app || !platform || !date) return;
+
+            const sheetName = `${app} - ${platform}`;
+            allDates.add(date);
+
+            // 1. Store Raw Data (For Country View)
+            if (!GLOBAL_RAW_DATA[sheetName]) GLOBAL_RAW_DATA[sheetName] = [];
+            
+            // Clean & Store
+            const cleanRow = cleanRowData(row);
+            GLOBAL_RAW_DATA[sheetName].push(cleanRow);
+
+            // 2. Revenue for Sorting
+            const rev = cleanRow["Estimated earnings (USD)"] || 0;
+            revenueMap[sheetName] = (revenueMap[sheetName] || 0) + rev;
+        });
+
+        GLOBAL_DATES = Array.from(allDates).sort((a,b) => new Date(a) - new Date(b));
+
+        // 3. Sort Sheets (Priority -> Revenue)
+        GLOBAL_SHEET_NAMES = Object.keys(GLOBAL_RAW_DATA).sort((a, b) => {
+            const idxA = APP_PRIORITY_LIST.indexOf(a);
+            const idxB = APP_PRIORITY_LIST.indexOf(b);
+            if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+            if (idxA !== -1) return -1;
+            if (idxB !== -1) return 1;
+            return revenueMap[b] - revenueMap[a];
+        });
+
+        // 4. Generate Aggregated Data (For Global View)
+        GLOBAL_SHEET_NAMES.forEach(sheet => {
+            const rows = GLOBAL_RAW_DATA[sheet];
+            // Group by Date and Sum/Avg
+            const dateMap = {};
+            rows.forEach(r => {
+                if(!dateMap[r.Date]) dateMap[r.Date] = { 
+                    Date: r.Date, count: 0, 
+                    DAV: 0, Requests: 0, Impressions: 0, Earnings: 0, 
+                    MatchRequests: 0, ShowRequests: 0 
+                };
+                dateMap[r.Date].count++;
+                dateMap[r.Date].DAV += r.DAV;
+                dateMap[r.Date].Requests += r.Requests;
+                dateMap[r.Date].Impressions += r.Impressions;
+                dateMap[r.Date].Earnings += r["Estimated earnings (USD)"];
+                
+                // Back-calculate raw matches/shows for accurate rate averaging
+                const matchRate = r["Match rate"] || 0;
+                const showRate = r["Show rate"] || 0;
+                dateMap[r.Date].MatchRequests += (r.Requests * matchRate);
+                dateMap[r.Date].ShowRequests += (r.Requests * matchRate * showRate); // approx
+            });
+
+            // Flatten to array
+            GLOBAL_AGGREGATED_DATA[sheet] = Object.values(dateMap).map(d => {
+                const globalRow = { ...d };
+                globalRow["Estimated earnings (USD)"] = d.Earnings;
+                globalRow["Requests"] = d.Requests;
+                globalRow["Impressions"] = d.Impressions;
+                globalRow["DAV"] = d.DAV;
+                
+                // Re-calc Rates
+                globalRow["Match rate"] = d.Requests ? (d.MatchRequests / d.Requests) : 0;
+                // Show rate is usually Impressions / Matched Requests
+                // But simplified:
+                globalRow["Show rate"] = d.MatchRequests ? (d.ShowRequests / d.MatchRequests) : 0;
+                
+                // Re-calc KPIs
+                globalRow["Request per AV"] = d.DAV ? (d.Requests / d.DAV) : 0;
+                globalRow["Imp per AV"] = d.DAV ? (d.Impressions / d.DAV) : 0; // IMPDAV
+                globalRow["eCPM (USD)"] = d.Impressions ? (d.Earnings / d.Impressions * 1000) : 0;
+                globalRow["Ads ARPDAV (USD)"] = d.DAV ? (d.Earnings / d.DAV) : 0;
+                
+                // Map keys for Renderer
+                globalRow["Observed eCPM (USD)"] = globalRow["eCPM (USD)"];
+                globalRow["IMPDAV"] = globalRow["Imp per AV"];
+                
+                return globalRow;
+            }).sort((a,b) => new Date(a.Date) - new Date(b.Date));
+        });
+    }
+
+    function cleanRowData(row) {
+        const newRow = { ...row };
+        // Parse Numbers
+        const floatKeys = ["DAV", "Requests", "Impressions", "Estimated earnings (USD)", "Observed eCPM (USD)", "IMPDAV", "Ads ARPDAV (USD)"];
+        floatKeys.forEach(k => {
+            if(newRow[k]) newRow[k] = parseFloat(newRow[k].toString().replace(/[$,]/g, '')) || 0;
+            else newRow[k] = 0;
+        });
+
+        // Rates
+        ["Match rate", "Show rate"].forEach(k => {
+            if(newRow[k]) newRow[k] = parseFloat(newRow[k].toString().replace('%', '')) / 100;
+            else newRow[k] = 0;
+        });
+        
+        // Calc Request per AV
+        newRow["Request per AV"] = newRow.DAV ? (newRow.Requests / newRow.DAV) : 0;
+        
+        return newRow;
+    }
+
+    function populateDropdown() {
+        appSelect.innerHTML = '<option value="all">Show All Apps (Global Summary)</option>';
+        GLOBAL_SHEET_NAMES.forEach(sheet => {
+            const option = document.createElement('option');
+            option.value = sheet;
+            option.innerText = sheet;
+            appSelect.appendChild(option);
+        });
+    }
+
+    // --- 3. RENDER HTML ---
+    function renderHTML(filterValue) {
+        const container = document.getElementById('reportOutput');
+        container.innerHTML = "";
+        
+        // A. GLOBAL SUMMARY VIEW
+        if (filterValue === "all") {
+            let colorIdx = 0;
+            GLOBAL_SHEET_NAMES.forEach(sheetName => {
+                const rows = GLOBAL_AGGREGATED_DATA[sheetName];
+                // Use All Dates for columns
+                const dates = GLOBAL_DATES; // Or specific dates for this app? 
+                // Better to use specific dates where data exists
+                const appDates = rows.map(r => r.Date);
+                
+                renderTable(container, sheetName + " (Global)", rows, appDates, HEADER_COLORS[colorIdx % HEADER_COLORS.length]);
+                colorIdx++;
+            });
+        } 
+        // B. COUNTRY BREAKDOWN VIEW
+        else {
+            const sheetName = filterValue;
+            const rawRows = GLOBAL_RAW_DATA[sheetName];
+            
+            // Group by Country
+            const countryGroups = {};
+            rawRows.forEach(r => {
+                if(!countryGroups[r.Country]) countryGroups[r.Country] = [];
+                countryGroups[r.Country].push(r);
+            });
+
+            // Filter & Sort Countries
+            let validCountries = [];
+            
+            TARGET_COUNTRIES.forEach(targetCountry => {
+                const countryData = countryGroups[targetCountry];
+                if(countryData) {
+                    // Check Avg DAV
+                    const totalDAV = countryData.reduce((sum, r) => sum + r.DAV, 0);
+                    const avgDAV = totalDAV / countryData.length;
+                    
+                    if(avgDAV > 100
+                
+                    ) {
+                        validCountries.push({ name: targetCountry, rows: countryData });
+                    }
+                }
+            });
+
+            if(validCountries.length === 0) {
+                container.innerHTML = "<p>No countries found with Average Active Viewers > 200 for this app.</p>";
+                return;
+            }
+
+            // Render
+            let colorIdx = GLOBAL_SHEET_NAMES.indexOf(sheetName); 
+            const baseColor = HEADER_COLORS[colorIdx % HEADER_COLORS.length];
+
+            validCountries.forEach(c => {
+                // Dates for this country
+                c.rows.sort((a,b) => new Date(a.Date) - new Date(b.Date));
+                const dates = c.rows.map(r => r.Date);
+                
+                renderTable(container, `${sheetName} - ${c.name}`, c.rows, dates, baseColor);
+            });
+        }
+    }
+
+    function renderTable(container, title, rows, dates, color) {
+        const table = document.createElement('table');
+        table.className = "excel-table";
+
+        // Header
+        const thead = document.createElement('tr');
+        const thTitle = document.createElement('th');
+        thTitle.innerText = title;
+        thTitle.className = "app-header";
+        thTitle.style.backgroundColor = color;
+        thead.appendChild(thTitle);
+
+        dates.forEach(d => {
+            const thDate = document.createElement('th');
+            const dateObj = new Date(d);
+            thDate.innerText = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+            thDate.className = "date-header";
+            thDate.style.backgroundColor = color;
+            thead.appendChild(thDate);
+        });
+        table.appendChild(thead);
+
+        // Body
+        KPI_ORDER.forEach(kpi => {
+            const tr = document.createElement('tr');
+            const tdLabel = document.createElement('td');
+            tdLabel.innerText = kpi;
+            tdLabel.className = "kpi-label";
+            tr.appendChild(tdLabel);
+
+            dates.forEach(date => {
+                const record = rows.find(r => r.Date === date);
+                const tdVal = document.createElement('td');
+                tdVal.className = "data-cell";
+                if(record) {
+                    const val = getRawValue(record, kpi);
+                    tdVal.innerText = formatValue(val, kpi);
+                } else {
+                    tdVal.innerText = "-";
+                }
+                tr.appendChild(tdVal);
+            });
+            table.appendChild(tr);
+        });
+
+        container.appendChild(table);
+    }
+
+    // --- 4. DOWNLOAD EXCEL ---
+    function downloadExcel(filterValue) {
+        const wb = XLSX.utils.book_new();
+        const thinBorder = { top: {style:'thin'}, bottom: {style:'thin'}, left: {style:'thin'}, right: {style:'thin'} };
+        const centerStyle = { border: thinBorder, alignment: { horizontal: 'center', vertical: 'center' } };
+        const headerFont = { name: 'Calibri', bold: true };
+
+        // Define what to download based on filter
+        let itemsToRender = []; // { title, rows, color }
+        
+        if (filterValue === "all") {
+            // Download Global Summary
+            let colorIdx = 0;
+            GLOBAL_SHEET_NAMES.forEach(sheetName => {
+                const rows = GLOBAL_AGGREGATED_DATA[sheetName];
+                const color = HEADER_COLORS[colorIdx % HEADER_COLORS.length];
+                itemsToRender.push({ title: sheetName, rows: rows, color: color, dates: rows.map(r=>r.Date) });
+                colorIdx++;
+            });
+        } else {
+            // Download Country Breakdown
+            const sheetName = filterValue;
+            const rawRows = GLOBAL_RAW_DATA[sheetName];
+            const countryGroups = {};
+            rawRows.forEach(r => { if(!countryGroups[r.Country]) countryGroups[r.Country]=[]; countryGroups[r.Country].push(r); });
+            
+            let colorIdx = GLOBAL_SHEET_NAMES.indexOf(sheetName);
+            const color = HEADER_COLORS[colorIdx % HEADER_COLORS.length];
+
+            TARGET_COUNTRIES.forEach(targetCountry => {
+                const countryData = countryGroups[targetCountry];
+                if(countryData) {
+                    const totalDAV = countryData.reduce((sum, r) => sum + r.DAV, 0);
+                    if((totalDAV / countryData.length) > 200) {
+                        countryData.sort((a,b) => new Date(a.Date) - new Date(b.Date));
+                        itemsToRender.push({ 
+                            title: `${sheetName} - ${targetCountry}`, 
+                            rows: countryData, 
+                            color: color,
+                            dates: countryData.map(r=>r.Date)
+                        });
+                    }
+                }
+            });
+        }
+
+        // Build Sheet
+        const masterRows = [];
+        itemsToRender.forEach(item => {
+            const colorHex = item.color.replace('#', '');
+            
+            // Header
+            const headerRow = [
+                { v: item.title, s: { fill: { fgColor: { rgb: colorHex } }, font: headerFont, ...centerStyle } }
+            ];
+            item.dates.forEach(d => {
+                headerRow.push({
+                    v: new Date(d), t: 'd', z: 'd-mmm',
+                    s: { fill: { fgColor: { rgb: colorHex } }, font: headerFont, ...centerStyle }
+                });
+            });
+            masterRows.push(headerRow);
+
+            // Data
+            KPI_ORDER.forEach(kpi => {
+                const dataRow = [
+                    { v: kpi, s: { font: { bold: true }, border: thinBorder, alignment: { horizontal: 'left' } } }
+                ];
+                item.dates.forEach(date => {
+                    const record = item.rows.find(r => r.Date === date);
+                    const val = record ? getRawValue(record, kpi) : 0;
+                    dataRow.push({
+                        v: val, t: 'n', z: getExcelFormat(kpi), s: centerStyle
+                    });
+                });
+                masterRows.push(dataRow);
+            });
+            
+            masterRows.push([]); masterRows.push([]); masterRows.push([]);
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(masterRows);
+        ws['!cols'] = [{ wch: 37 }, ...Array(50).fill({ wch: 12 })];
+        XLSX.utils.book_append_sheet(wb, ws, "AdMob Report");
+        
+        const fileName = filterValue === "all" ? "AdMob_Master_Global.xlsx" : `AdMob_${filterValue.replace(/[^a-z0-9]/gi, '_')}.xlsx`;
+        XLSX.writeFile(wb, fileName);
+    }
+
+    // --- HELPERS ---
+    function getRawValue(record, kpiLabel) {
+        // Map UI Label to Data Key
+        let key = Object.keys(KPI_MAP).find(k => KPI_MAP[k] === kpiLabel);
+        if (kpiLabel === "Request per AV") key = "Request per AV";
+        return record[key] || 0;
+    }
+
+    function formatValue(val, kpi) {
+        if(kpi.includes("Ads ARPDAV")) return val.toFixed(5);
+        if(kpi.includes("USD")) return "$" + val.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        if(kpi.includes("rate") || kpi.includes("CTR")) return (val * 100).toFixed(2) + "%";
+        if(kpi.includes("Viewer") || kpi.includes("Requests") || kpi.includes("Impressions")) return Math.round(val).toLocaleString();
+        return val.toFixed(2);
+    }
+
+    function getExcelFormat(kpi) {
+        if(kpi.includes("Ads ARPDAV")) return "0.00000";
+        if(kpi.includes("USD")) return "\"$\"#,##0.00";
+        if(kpi.includes("rate") || kpi.includes("CTR")) return "0.00%";
+        if(kpi.includes("Viewer") || kpi.includes("Requests") || kpi.includes("Impressions")) return "#,##0";
+        return "0.00";
+    }
+</script>
+
+</body>
+</html>
