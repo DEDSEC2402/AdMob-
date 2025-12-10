@@ -334,7 +334,7 @@
                     const totalDAV = countryData.reduce((sum, r) => sum + r.DAV, 0);
                     const avgDAV = totalDAV / countryData.length;
                     
-                    if(avgDAV > 100
+                    if(avgDAV > 50
                 
                     ) {
                         validCountries.push({ name: targetCountry, rows: countryData });
@@ -442,7 +442,7 @@
                 const countryData = countryGroups[targetCountry];
                 if(countryData) {
                     const totalDAV = countryData.reduce((sum, r) => sum + r.DAV, 0);
-                    if((totalDAV / countryData.length) > 200) {
+                    if((totalDAV / countryData.length) > 50) {
                         countryData.sort((a,b) => new Date(a.Date) - new Date(b.Date));
                         itemsToRender.push({ 
                             title: `${sheetName} - ${targetCountry}`, 
@@ -525,3 +525,4 @@
 
 </body>
 </html>
+
